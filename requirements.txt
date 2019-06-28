@@ -1,2 +1,1 @@
-augustpy
 bluepy>=0.9.11
