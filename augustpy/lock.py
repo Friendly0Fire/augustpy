@@ -1,6 +1,6 @@
 import bluepy.btle as btle
 import Cryptodome.Random
-import augustpy.session
+from . import session, util
 
 class Lock:
     COMMAND_SERVICE_UUID        = btle.UUID("0000fe24-0000-1000-8000-00805f9b34fb")
@@ -19,6 +19,7 @@ class Lock:
         self.session = None
         self.secure_session = None
         self.command_service = None
+        self.is_secure = False
 
     def set_name(self, name):
         self.name = name
@@ -28,8 +29,8 @@ class Lock:
         if self.name is None:
             self.name = self.peripheral.addr
 
-        self.session = augustpy.session.Session(self.peripheral)
-        self.secure_session = augustpy.session.SecureSession(self.peripheral, self.key_index)
+        self.session = session.Session(self.peripheral)
+        self.secure_session = session.SecureSession(self.peripheral, self.key_index)
 
         self.command_service = self.peripheral.getServiceByUUID(self.COMMAND_SERVICE_UUID)
 
@@ -50,25 +51,27 @@ class Lock:
 
         # Send SEC_LOCK_TO_MOBILE_KEY_EXCHANGE
         cmd = self.secure_session.build_command(0x01)
-        cmd[0x04:0x12] = handshake_keys[:0x08]
+        util._copy(cmd, handshake_keys[0x00:0x08], destLocation=0x04)
         response = self.secure_session.execute(cmd)
         if response[0x00] != 0x02:
-            raise Exception("Unexpected response to SEC_LOCK_TO_MOBILE_KEY_EXCHANGE: " + response.hex())
+            raise Exception("Unexpected response to SEC_LOCK_TO_MOBILE_KEY_EXCHANGE: " +
+                            response.hex())
 
         self.is_secure = True
 
-        session_key = bytearray(0x10)
-        session_key[:0x08] = handshake_keys[:0x08]
-        session_key[0x08:0x0f] = response[0x04:0x0c]
+        session_key = bytearray(16)
+        util._copy(session_key, handshake_keys[0x00:0x08])
+        util._copy(session_key, response[0x04:0x0c], destLocation=0x08)
         self.session.set_key(session_key)
         self.secure_session.set_key(session_key)
 
         # Send SEC_INITIALIZATION_COMMAND
         cmd = self.secure_session.build_command(0x03)
-        cmd[0x04:0x12] = handshake_keys[0x08:0x10]
+        util._copy(cmd, handshake_keys[0x08:0x10], destLocation=0x04)
         response = self.secure_session.execute(cmd)
         if response[0] != 0x04:
-            raise Exception("Unexpected response to SEC_INITIALIZATION_COMMAND: " + response.hex())
+            raise Exception("Unexpected response to SEC_INITIALIZATION_COMMAND: " +
+                            response.hex())
 
         return True
 
@@ -112,17 +115,19 @@ class Lock:
 
     def disconnect(self):
 
-        if self.is_secure:
-            cmd = self.secure_session.build_command(0x05)
-            cmd[0x11] = 0x00
-            response = self.secure_session.execute(cmd)
+        # if self.is_secure:
+        #     cmd = self.secure_session.build_command(0x05)
+        #     cmd[0x11] = 0x00
+        #     response = self.secure_session.execute(cmd)
 
-            if response[0] != 0x8b:
-                raise Exception("Unexpected response to DISCONNECT: " + response.hex())
+        #     if response[0] != 0x8b:
+        #         raise Exception("Unexpected response to DISCONNECT: " +
+        #                         response.hex())
 
         self.peripheral.disconnect()
 
         return True
 
     def is_connected(self):
-        return type(self.session) is Session and self.peripheral.addr is not None
+        return type(self.session) is session.Session \
+            and self.peripheral.addr is not None

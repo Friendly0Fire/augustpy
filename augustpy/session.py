@@ -1,21 +1,7 @@
 import bluepy.btle as btle
 from Cryptodome.Cipher import AES
-
-
-def _simple_checksum(buf: bytes):
-    cs = 0
-    for i in range(0x12):
-        cs = (cs + buf[i]) & 0xFF
-
-    return (-cs) & 0xFF
-
-
-def _security_checksum(buffer: bytes):
-    val1 = int.from_bytes(buffer[0x00:0x04], byteorder='little', signed=False)
-    val2 = int.from_bytes(buffer[0x04:0x08], byteorder='little', signed=False)
-    val3 = int.from_bytes(buffer[0x08:0x12], byteorder='little', signed=False)
-
-    return (0 - (val1 + val2 + val3)) & 0xffffffff
+from . import util
+import time
 
 
 class SessionDelegate(btle.DefaultDelegate):
@@ -27,12 +13,15 @@ class SessionDelegate(btle.DefaultDelegate):
     def handleNotification(self, cHandle, data):
         if self.data is not None:
             return
+
+        data = self.session.decrypt(data)
         self.session._validate_response(data)
         self.data = data
 
 
 class Session:
-    cipher = None
+    cipher_encrypt = None
+    cipher_decrypt = None
 
     def __init__(self, peripheral):
         self.peripheral = peripheral
@@ -44,13 +33,16 @@ class Session:
         self.read_characteristic = read_characteristic
 
     def set_key(self, key: bytes):
-        self.cipher = AES.new(key, AES.MODE_CBC, iv=bytes(0x10))
+        self.cipher_encrypt = AES.new(key, AES.MODE_CBC, iv=bytes(0x10))
+        self.cipher_decrypt = AES.new(key, AES.MODE_CBC, iv=bytes(0x10))
 
     def decrypt(self, data: bytearray):
-        if self.cipher is not None:
+        if self.cipher_decrypt is not None:
             cipherText = data[0x00:0x10]
-            plainText = self.cipher.decrypt(cipherText)
-            data[0x00:0x10] = plainText
+            plainText = self.cipher_decrypt.decrypt(cipherText)
+            if type(data) is not bytearray:
+                data = bytearray(data)
+            util._copy(data, plainText)
 
         return data
 
@@ -62,31 +54,36 @@ class Session:
         return cmd
 
     def _write_checksum(self, command: bytearray):
-        checksum = _simple_checksum(command)
+        checksum = util._simple_checksum(command)
         command[0x03] = checksum
 
     def _validate_response(self, response: bytearray):
-        if _simple_checksum(response) != 0:
+        if util._simple_checksum(response) != 0:
             raise Exception("Simple checksum mismatch")
 
         if response[0x00] != 0xbb and response[0x00] != 0xaa:
             raise Exception("Incorrect flag in response")
 
     def _write(self, command: bytearray):
+        print("Writing command: " + command.hex())
+
         # NOTE: The last two bytes are not encrypted
         # General idea seems to be that if the last byte
         # of the command indicates an offline key offset (is non-zero),
         # the command is "secure" and encrypted with the offline key
-        if self.cipher is not None:
+        if self.cipher_encrypt is not None:
             plainText = command[0x00:0x10]
-            cipherText = self.cipher.encrypt(plainText)
-            command[0x00:0x10] = cipherText
+            cipherText = self.cipher_encrypt.encrypt(plainText)
+            util._copy(command, cipherText)
+
+        print("Encrypted command: " + command.hex())
 
         delegate = SessionDelegate(self)
 
         self.peripheral.withDelegate(delegate)
         self.write_characteristic.write(command, True)
-        if delegate.data is None and self.peripheral.waitForNotifications(10) is False:
+        if delegate.data is None and \
+                self.peripheral.waitForNotifications(10) is False:
             raise Exception("Notification timed out")
 
         return delegate.data
@@ -103,7 +100,8 @@ class SecureSession(Session):
         self.key_index = key_index
 
     def set_key(self, key: bytes):
-        self.cipher = AES.new(key, AES.MODE_ECB)
+        self.cipher_encrypt = AES.new(key, AES.MODE_ECB)
+        self.cipher_decrypt = AES.new(key, AES.MODE_ECB)
 
     def build_command(self, opcode: int):
         cmd = bytearray(0x12)
@@ -113,9 +111,10 @@ class SecureSession(Session):
         return cmd
 
     def _write_checksum(self, command: bytearray):
-        checksum = _security_checksum(command)
-        command[0x0c:0x0f] = checksum.to_bytes(4, byteorder='little', signed=False)
+        checksum = util._security_checksum(command)
+        checksum_bytes = checksum.to_bytes(4, byteorder='little', signed=False)
+        util._copy(command, checksum_bytes, destLocation=0x0c)
 
     def _validate_response(self, data: bytes):
-        if _security_checksum(data) != int.from_bytes(data[0x0c:0x0f]):
+        if util._security_checksum(data) != int.from_bytes(data[0x0c:0x10], byteorder='little', signed=False):
             raise Exception("Security checksum mismatch")

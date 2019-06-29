@@ -21,4 +21,5 @@ for lock_config in config:
 for lock in locks:
     print("Lock " + lock.name + " is currently " + lock.status())
     lock.unlock()
+    print("Lock " + lock.name + " is now " + lock.status())
     lock.disconnect()
