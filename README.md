@@ -1,6 +1,6 @@
 # augustpy
 
-Because the August Connect is far too expensive.
+Because the August Connect is far too expensive. Heavily inspired by the abandoned [augustctl](https://github.com/terrcin/augustctl) project and its [many](https://github.com/robson83/augustctl) [forks](https://github.com/ethitter/augustctl).
 
 ## Setup
 
