@@ -106,10 +106,17 @@ class Lock:
         status = response[0x08]
 
         strstatus = 'unknown'
-        if status == 0x03:
+        if status == 0x02:
+            strstatus = 'unlocking'
+        elif status == 0x03:
             strstatus = 'unlocked'
+        elif status == 0x04:
+            strstatus = 'locking'
         elif status == 0x05:
             strstatus = 'locked'
+
+        if strstatus == 'unknown':
+            print("Unrecognized status code: " + hex(status))
 
         return strstatus
 

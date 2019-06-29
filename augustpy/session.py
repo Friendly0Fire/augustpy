@@ -1,7 +1,6 @@
 import bluepy.btle as btle
 from Cryptodome.Cipher import AES
 from . import util
-import time
 
 
 class SessionDelegate(btle.DefaultDelegate):
@@ -14,7 +13,10 @@ class SessionDelegate(btle.DefaultDelegate):
         if self.data is not None:
             return
 
+        print("Receiving response: " + data.hex())
+
         data = self.session.decrypt(data)
+        print("Decrypted response: " + data.hex())
         self.session._validate_response(data)
         self.data = data
 
@@ -58,6 +60,7 @@ class Session:
         command[0x03] = checksum
 
     def _validate_response(self, response: bytearray):
+        print("Response simple checksum: " + str(util._simple_checksum(response)))
         if util._simple_checksum(response) != 0:
             raise Exception("Simple checksum mismatch")
 
@@ -116,5 +119,8 @@ class SecureSession(Session):
         util._copy(command, checksum_bytes, destLocation=0x0c)
 
     def _validate_response(self, data: bytes):
-        if util._security_checksum(data) != int.from_bytes(data[0x0c:0x10], byteorder='little', signed=False):
+        print("Response security checksum: " + str(util._security_checksum(data)))
+        response_checksum = int.from_bytes(data[0x0c:0x10], byteorder='little', signed=False)
+        print("Response message checksum: " + str(response_checksum))
+        if util._security_checksum(data) != response_checksum:
             raise Exception("Security checksum mismatch")
